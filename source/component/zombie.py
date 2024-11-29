@@ -85,6 +85,7 @@ class Zombie(pg.sprite.Sprite):
     def attacking(self):
         if self.health <= 0:
             self.setDie()
+            self.dead = True
         elif self.health <= c.LOSTHEAD_HEALTH and not self.losHead:
             self.changeFrames(self.losthead_attack_frames)
             self.setLostHead()

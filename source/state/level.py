@@ -7,6 +7,7 @@ import numpy as np
 from .. import tool
 from .. import constants as c
 from ..component import map, plant, zombie, menubar
+import random
 
 card1Loc = (109, 64) 
 card2Loc = (153, 56) 
@@ -30,7 +31,7 @@ keys = [pg.K_1, pg.K_2, pg.K_3, pg.K_4, pg.K_5, pg.K_6, pg.K_7, pg.K_8]
 # pos: (212, 235) #2,3
 # pos: (321, 234) #2,4
 
-gridLocs = [[(x * c.GRID_X_SIZE, y * c.GRID_Y_SIZE + 40) for x in range(1, c.GRID_X_LEN)] for y in range(1, c.GRID_Y_LEN)]
+gridLocs = [[((x + 1) * c.GRID_X_SIZE, (y + 1) * c.GRID_Y_SIZE + 40) for x in range(0, c.GRID_X_LEN)] for y in range(0, c.GRID_Y_LEN)]
 
 choosePlant1Loc =  (45, 159)   # SunFlower
 choosePlant2Loc =  (103, 162)  # Peashooter
@@ -46,6 +47,8 @@ choosePlantsLoc = [choosePlant1Loc, choosePlant2Loc, choosePlant3Loc, choosePlan
 class Level(tool.State):
     def __init__(self):
         tool.State.__init__(self)
+        self.numPlants = 4
+        self.actionSpaceN = c.GRID_Y_LEN * c.GRID_X_LEN * self.numPlants + 2
     
     def startup(self, current_time, persist):
         self.game_info = persist
@@ -58,12 +61,14 @@ class Level(tool.State):
         self.cc = 0
         self.PlantGrid = np.zeros((c.GRID_Y_LEN, c.GRID_X_LEN + 2))
         self.ZombieGrid = np.zeros((c.GRID_Y_LEN, c.GRID_X_LEN + 2))
+        self.score = 0
         
         self.loadMap()
         self.setupBackground()
         self.initState()
 
     def loadMap(self):
+        # print(f"LoadMap: {self.game_info[c.LEVEL_NUM]}")
         map_file = 'level_' + str(self.game_info[c.LEVEL_NUM]) + '.json'
         file_path = os.path.join('source', 'data', 'map', map_file)
         f = open(file_path)
@@ -110,36 +115,54 @@ class Level(tool.State):
             _, y = self.map.getMapGridPos(0, i)
             self.cars.append(plant.Car(-25, y+20, i))
 
-    def update(self, surface, current_time, mouse_pos, mouse_click, keyPressed = None):
+    def update(self, surface, current_time, mouse_pos, mouse_click, keyPressed = None, action = None):
         self.current_time = self.game_info[c.CURRENT_TIME] = current_time
         # if self.state == c.CHOOSE:
         #     self.chooseAgent()
         if self.state == c.PLAY:
-            self.play(mouse_pos, mouse_click, keyPressed)
+            if action is not None:
+                self.playAgent(action)
+            else:
+                self.play(mouse_pos, mouse_click, keyPressed)
             pGrid = np.zeros((c.GRID_Y_LEN, c.GRID_X_LEN + 2))
             zGrid = np.zeros((c.GRID_Y_LEN, c.GRID_X_LEN + 2))
             for group in self.plant_groups:
                 for plant in group.sprites():
                     gridX, gridY = self.map.getMapIndex(plant.rect.centerx, plant.rect.centery)
-                    print("plant")
-                    print(gridX, gridY)
+                    # print("plant")
+                    # print(gridX, gridY)
                     pGrid[gridY, gridX + 1] = self.plantNameToNum(plant.name)
+                    # self.score += 0.5 / c.FPS
+                    
                 
             for group in self.zombie_groups:
                 for zombie in group.sprites():
                     zombiePos = zombie.rect #x, y, w, h
                     gridX, gridY = self.map.getMapIndex(zombiePos[0], zombiePos[1] + zombiePos[3])
-                    print("zombie")
-                    print(gridX, gridY)
+                    # print("zombie")
+                    # print(gridX, gridY)
                     zGrid[gridY, gridX + 1] += zombie.health
+
+                    if zombie.health == 0 and not zombie.dead:
+                        self.score += self.zomScoreWhenKills(zombie.name)
+                        zombie.dead = True
+
+            for car in self.cars:
+                gridX, gridY = self.map.getMapIndex(car.rect.x, car.rect.bottom)
+                # print("Car")
+                # print(gridX, gridY)
+                pGrid[gridY, gridX + 1] = self.plantNameToNum(c.CAR)
 
             self.PlantGrid = pGrid
             self.ZombieGrid = zGrid
+            # self.score += 0.001 / c.FPS
+            # print(self.score)
 
-            print(pGrid)
-            print(zGrid)
-            print(self.menubar.getAvailableMoves()[:4])
-            print(self.menubar.sun_value)
+            # print(pGrid)
+            # print(zGrid)
+            # print(current_time)
+            # print(self.menubar.getAvailableMoves()[:4])
+            # print(self.menubar.sun_value)
 
         self.draw(surface)
 
@@ -178,7 +201,7 @@ class Level(tool.State):
             if self.panel.checkStartButtonClick(mouse_pos):
                 self.initPlay(self.panel.getSelectedCards())
             
-    def chooseAgent(self):
+    # def chooseAgent(self):
         # if mouse_pos and mouse_click[0]:
         #     self.panel.checkCardClick(mouse_pos)
         #     if self.panel.checkStartButtonClick(mouse_pos):
@@ -188,7 +211,7 @@ class Level(tool.State):
         #     self.panel.checkCardClick(loc)
 
         # self.initPlay(self.panel.getSelectedCards())
-        print("Done")
+        # print("Done")
 
     def initPlay(self, card_list):
         self.state = c.PLAY
@@ -209,6 +232,22 @@ class Level(tool.State):
         self.setupGroups()
         self.setupZombies()
         self.setupCars()
+
+    def getActionMask(self):
+        mask = np.ones(self.actionSpaceN)
+        mask[0] = 1
+        mask[1] = len(self.sun_group) > 0
+        availableActions = np.tile(self.menubar.getAvailableMoves()[:4], c.GRID_X_LEN * c.GRID_Y_LEN)
+        # print(self.menubar.getAvailableMoves().shape)
+        # print(availableActions)
+        grid = np.array(self.map.map).flatten().repeat(self.numPlants)
+        # print(np.array(self.map.map).flatten().shape)
+        # print(grid)
+        mask[2:] = availableActions * np.logical_not(grid)
+        return mask
+
+
+
 
     def play(self, mouse_pos, mouse_click, keyPressed):
         if self.zombie_start_time == 0:
@@ -267,6 +306,10 @@ class Level(tool.State):
                 sun = list(self.sun_group)[0]
                 sun.checkCollision(sun.rect.x, sun.rect.y)
                 self.menubar.increaseSunValue(sun.sun_value)
+
+                self.score += 0.25
+
+
 
         for key, cardLoc in zip(keys, cardLocs):
             if keyPressed[key]:
@@ -345,15 +388,23 @@ class Level(tool.State):
             return 3
         elif name == c.POTATOMINE:
             return 4
+        elif name == c.CAR:
+            return 5
         else:
             print(name)
             raise NotImplementedError("No plant for this yet")
         
-    def zombieNameToNum(self, name):
+    def zomScoreWhenKills(self, name):
         if name == c.NORMAL_ZOMBIE:
-            return -1
+            return c.NORMAL_HEALTH
         elif name == c.FLAG_ZOMBIE:
-            return -2
+            return c.FLAG_HEALTH
+        elif name == c.CONEHEAD_ZOMBIE:
+            return c.CONEHEAD_HEALTH
+        elif name == c.BUCKETHEAD_ZOMBIE:
+            return c.BUCKETHEAD_HEALTH
+        elif name == c.NEWSPAPER_ZOMBIE:
+            return c.NEWSPAPER_HEALTH
         else:
             print(name)
             raise NotImplementedError("No Zombie for this yet")
@@ -367,18 +418,18 @@ class Level(tool.State):
         if self.hint_image is None:
             self.setupHintImageAgent((x,y))
         x, y = self.hint_rect.centerx, self.hint_rect.bottom
-        print(f"x: {x}, y: {y}")
+        # print(f"x: {x}, y: {y}")
         map_x, map_y = self.map.getMapIndex(x, y)
-        print(f"mx: {map_x}, my: {map_y}")
+        # print(f"mx: {map_x}, my: {map_y}")
 
         if self.plant_name == c.SUNFLOWER:
-            new_plant = plant.SunFlower(x, y, self.sun_group)
+            new_plant = plant.SunFlower(x, y, self.sun_group, self.current_time)
         elif self.plant_name == c.PEASHOOTER:
-            new_plant = plant.PeaShooter(x, y, self.bullet_groups[map_y])
+            new_plant = plant.PeaShooter(x, y, self.bullet_groups[map_y], self.current_time)
         elif self.plant_name == c.SNOWPEASHOOTER:
             new_plant = plant.SnowPeaShooter(x, y, self.bullet_groups[map_y])
         elif self.plant_name == c.WALLNUT:
-            new_plant = plant.WallNut(x, y)
+            new_plant = plant.WallNut(x, y, self.current_time)
         elif self.plant_name == c.CHERRYBOMB:
             new_plant = plant.CherryBomb(x, y)
         elif self.plant_name == c.THREEPEASHOOTER:
@@ -390,7 +441,7 @@ class Level(tool.State):
         elif self.plant_name == c.PUFFSHROOM:
             new_plant = plant.PuffShroom(x, y, self.bullet_groups[map_y])
         elif self.plant_name == c.POTATOMINE:
-            new_plant = plant.PotatoMine(x, y)
+            new_plant = plant.PotatoMine(x, y, self.current_time)
         elif self.plant_name == c.SQUASH:
             new_plant = plant.Squash(x, y)
         elif self.plant_name == c.SPIKEWEED:
@@ -419,9 +470,9 @@ class Level(tool.State):
         else:
             self.menubar.deleateCard(self.select_plant)
 
-        print(self.bar_type)
+        # print(self.bar_type)
         if self.bar_type != c.CHOSSEBAR_BOWLING:
-            print("Setting grid type")
+            # print("Setting grid type")
             self.map.setMapGridType(map_x, map_y, c.MAP_EXIST)
         self.removeMouseImage()
 
@@ -446,20 +497,31 @@ class Level(tool.State):
         self.head_group.update(self.game_info)
         self.sun_group.update(self.game_info)
         
-        if not self.drag_plant and mouse_pos and mouse_click[0]:
-            result = self.menubar.checkCardClick(mouse_pos)
-            if result:
-                self.setupMouseImage(result[0], result[1])
-        elif self.drag_plant:
-            if mouse_click[1]:
-                self.removeMouseImage()
-            elif mouse_click[0]:
-                if self.menubar.checkMenuBarClick(mouse_pos):
-                    self.removeMouseImage()
-                else:
-                    self.addPlant()
-            elif mouse_pos is None:
-                self.setupHintImage()
+        if action == 1:
+            #collect sun
+            if len(self.sun_group) > 0:
+                sun = list(self.sun_group)[0]
+                sun.checkCollision(sun.rect.x, sun.rect.y)
+                self.menubar.increaseSunValue(sun.sun_value)
+
+                self.score += 0.25
+
+        action -= 2
+        row = action // (c.GRID_X_LEN * self.numPlants)
+        col = (action % (c.GRID_X_LEN * self.numPlants)) // self.numPlants
+        action = action % self.numPlants
+
+        result = self.menubar.checkCardClick(cardLocs[action])
+        if result:
+            self.setupMouseImage(result[0], result[1])
+            # print(len(gridLocs))
+            # print(len(gridLocs[0]))
+            # print(row)
+            # print(col)
+            self.addPlantAgent(gridLocs[row][col])
+            self.removeMouseImage()
+
+        
         
         if self.produce_sun:
             if(self.current_time - self.sun_timer) > c.PRODUCE_SUN_INTERVAL:
@@ -570,8 +632,8 @@ class Level(tool.State):
 
     def setupHintImageAgent(self, location):
         pos = self.canSeedPlantAgent(location)
-        print(pos)
-        print(self.mouse_image)
+        # print(pos)
+        # print(self.mouse_image)
         if pos and self.mouse_image:
             if (self.hint_image and pos[0] == self.hint_rect.x and
                 pos[1] == self.hint_rect.y):
@@ -591,8 +653,8 @@ class Level(tool.State):
     
     def setupHintImage(self):
         pos = self.canSeedPlant()
-        print(pos)
-        print(self.mouse_image)
+        # print(pos)
+        # print(self.mouse_image)
         if pos and self.mouse_image:
             if (self.hint_image and pos[0] == self.hint_rect.x and
                 pos[1] == self.hint_rect.y):
@@ -691,6 +753,7 @@ class Level(tool.State):
     def checkCarCollisions(self):
         collided_func = pg.sprite.collide_circle_ratio(0.8)
         for car in self.cars:
+            beginState = car.state
             zombies = pg.sprite.spritecollide(car, self.zombie_groups[car.map_y], False, collided_func)
             for zombie in zombies:
                 if zombie and zombie.state != c.DIE:
@@ -698,6 +761,12 @@ class Level(tool.State):
                     zombie.setDie()
             if car.dead:
                 self.cars.remove(car)
+
+            if beginState != car.state:
+                # print("Starting mower")
+                self.score -= 2.5
+
+
 
     def boomZombies(self, x, map_y, y_range, x_range):
         for i in range(self.map_y_len):
@@ -728,7 +797,7 @@ class Level(tool.State):
         elif plant.name == c.HYPNOSHROOM and plant.state != c.SLEEP:
             zombie = plant.kill_zombie
             zombie.setHypno()
-            _, map_y = self.map.getMapIndex(zombie.rect.centerx, zombie.rect.bottom)
+            _, map_y = self.map.getMapIndex(zombie.rect.x, zombie.rect.bottom)
             self.zombie_groups[map_y].remove(zombie)
             self.hypno_zombie_groups[map_y].add(zombie)
         plant.kill()
@@ -834,12 +903,17 @@ class Level(tool.State):
 
     def checkGameState(self):
         if self.checkVictory():
-            self.game_info[c.LEVEL_NUM] += 1
+            # print(f"checkGameState: {self.game_info[c.LEVEL_NUM]}")
+            self.game_info[c.LEVEL_NUM] = random.randint(1,5)#1
             self.next = c.LEVEL
             self.done = True
+            self.score += 10
         elif self.checkLose():
+            # print(f"checkGameState: {self.game_info[c.LEVEL_NUM]}")
+            self.game_info[c.LEVEL_NUM] = random.randint(1,5)#1
             self.next = c.LEVEL
             self.done = True
+            self.score -= 10
 
     def drawMouseShow(self, surface):
         if self.hint_plant:
@@ -873,3 +947,6 @@ class Level(tool.State):
 
             if self.drag_plant:
                 self.drawMouseShow(surface)
+
+    def getScore(self):
+        return self.score

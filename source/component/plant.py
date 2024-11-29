@@ -128,6 +128,7 @@ class Plant(pg.sprite.Sprite):
         self.animate_interval = 100
         self.hit_timer = 0
 
+
     def loadFrames(self, frames, name, scale, color=c.BLACK):
         frame_list = tool.GFX[name]
         if name in tool.PLANT_RECT:
@@ -256,10 +257,11 @@ class Sun(Plant):
         return False
 
 class SunFlower(Plant):
-    def __init__(self, x, y, sun_group):
+    def __init__(self, x, y, sun_group, spawnTime):
         Plant.__init__(self, x, y, c.SUNFLOWER, c.PLANT_HEALTH, None)
         self.sun_timer = 0
         self.sun_group = sun_group
+        self.spawnTime = spawnTime
     
     def idling(self):
         if self.sun_timer == 0:
@@ -269,9 +271,10 @@ class SunFlower(Plant):
             self.sun_timer = self.current_time
 
 class PeaShooter(Plant):
-    def __init__(self, x, y, bullet_group):
+    def __init__(self, x, y, bullet_group, spawnTime):
         Plant.__init__(self, x, y, c.PEASHOOTER, c.PLANT_HEALTH, bullet_group)
         self.shoot_timer = 0
+        self.spawnTime = spawnTime
         
     def attacking(self):
         if (self.current_time - self.shoot_timer) > 2000:
@@ -323,11 +326,13 @@ class SnowPeaShooter(Plant):
             self.shoot_timer = self.current_time
 
 class WallNut(Plant):
-    def __init__(self, x, y):
+    def __init__(self, x, y, spawnTime):
         Plant.__init__(self, x, y, c.WALLNUT, c.WALLNUT_HEALTH, None)
         self.load_images()
         self.cracked1 = False
         self.cracked2 = False
+        self.spawnTime = spawnTime
+
 
     def load_images(self):
         self.cracked1_frames = []
@@ -482,14 +487,16 @@ class PuffShroom(Plant):
         return False
 
 class PotatoMine(Plant):
-    def __init__(self, x, y):
+    def __init__(self, x, y, spawnTime):
         Plant.__init__(self, x, y, c.POTATOMINE, c.PLANT_HEALTH, None)
         self.animate_interval = 300
         self.is_init = True
         self.init_timer = 0
         self.bomb_timer = 0
         self.explode_y_range = 0
-        self.explode_x_range = c.GRID_X_SIZE//3 * 2
+        self.explode_x_range = c.GRID_X_SIZE//3 * 2 + 21
+        self.spawnTime = spawnTime
+
 
     def loadImages(self, name, scale):
         self.init_frames = []

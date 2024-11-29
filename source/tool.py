@@ -10,6 +10,9 @@ from .DQNAgent import Agent_DQN
 import torch
 import torch.nn as nn
 import torchvision.transforms
+from collections import deque
+from tqdm import tqdm
+import numpy as np
 
 class State():
     def __init__(self):
@@ -77,11 +80,11 @@ class Control():
         self.state = self.state_dict[self.state_name]
         self.state.startup(self.current_time, self.game_info)
 
-    def update(self):
+    def update(self, action = None):
         self.current_time = pg.time.get_ticks()
         if self.state.done:
             self.flip_state()
-        self.state.update(self.screen, self.current_time, self.mouse_pos, self.mouse_click, self.keys)
+        self.state.update(self.screen, self.current_time, self.mouse_pos, self.mouse_click, self.keys, action)
         self.mouse_pos = None
         self.mouse_click[0] = False
         self.mouse_click[1] = False
@@ -110,26 +113,91 @@ class Control():
             
 
     def main(self):
-        device = "cuda:0"
-        while not self.done:
+        def step():
             self.event_loop()
             self.update()
             pg.display.update()
             self.clock.tick(self.fps)
-            # pg.image.save(self.screen,"screenshot.jpg")
-            # print(pg.surfarray.array3d(self.screen))
-            # print(pg.surfarray.array3d(self.screen).shape)
 
-            # if self.state_name == c.LEVEL:
-            #     screenTensor = torch.tensor(pg.surfarray.array3d(self.screen), dtype=torch.float32).to(device)
-            #     screenTensor = self.tsfm(screenTensor)
-            #     # print(screenTensor.shape)
-            #     print(self.model(screenTensor.unsqueeze(0)).shape)
+        def stepAgent(action):
+            self.event_loop()
+            self.update(action)
+            pg.display.update()
+            self.clock.tick(self.fps)
+
+        allScores = []
+        scores = deque(maxlen=30)
+        total_steps = 0
+        device = "cuda:0"
+
+        train_progress_bar = tqdm(range(1000), desc="Training")
+
+        for episode in train_progress_bar:
+            step()
+            # print(self.game_info[c.LEVEL_NUM])
             state = torch.cat([torch.tensor(self.state.PlantGrid.flatten(), dtype=torch.float32), torch.tensor(self.state.ZombieGrid.flatten(), dtype=torch.float32), torch.tensor([self.state.menubar.sun_value], dtype=torch.float32), torch.tensor(self.state.menubar.getAvailableMoves()[:4], dtype=torch.float32)])
 
-            self.agent.q_net(state.to(device))
+            while not self.done:
+                
+                # pg.image.save(self.screen,"screenshot.jpg")
+                # print(pg.surfarray.array3d(self.screen))
+                # print(pg.surfarray.array3d(self.screen).shape)
+
+                # if self.state_name == c.LEVEL:
+                #     screenTensor = torch.tensor(pg.surfarray.array3d(self.screen), dtype=torch.float32).to(device)
+                #     screenTensor = self.tsfm(screenTensor)
+                #     # print(screenTensor.shape)
+                #     print(self.model(screenTensor.unsqueeze(0)).shape)
+                prevScore = self.state.score
+                mask = self.state.getActionMask()
+                action = self.agent.make_action(state, mask, True)
+                # print(action)
+                stepAgent(action)
+
+                nextState = torch.cat([torch.tensor(self.state.PlantGrid.flatten(), dtype=torch.float32), torch.tensor(self.state.ZombieGrid.flatten(), dtype=torch.float32), torch.tensor([self.state.menubar.sun_value], dtype=torch.float32), torch.tensor(self.state.menubar.getAvailableMoves()[:4], dtype=torch.float32)])
+                currentScore = self.state.score
+                reward = currentScore - prevScore
+                # print(reward)
+                if total_steps % self.agent.update_replay_buffer_every == 0:
+                    # print(f"Pushing: {state}")
+                    # print("Pushing to buffer")
+                    self.agent.push(state.cpu(), action, reward, nextState.cpu(), self.done, mask)
+
+                state = nextState
+                total_steps += 1
+
+
+
+                if len(self.agent.replay_buffer) >= self.agent.batch_size and total_steps % self.agent.update_net_every == 0:
+                    # print("Learning")
+                    self.agent.learn()
+
+                if total_steps % self.agent.update_target_every == 0:
+                    # print("Updating Target")
+                    self.agent.q_target.load_state_dict(self.agent.q_net.state_dict())
+                    train_progress_bar.set_postfix({"Epsilon": self.agent.epsilon, "Avg Score": 0, "Score": self.state.score})
+
+
+                
+
+                if self.state.done == True:
+                    # print(f"FinalScore: {self.state.score}")
+                    scores.append(self.state.score)
+                    train_progress_bar.set_postfix({"Epsilon": self.agent.epsilon, "Avg Score": sum(scores) / len(scores), "Score": self.state.score})
+                    # score += self.state.sun_value + 
+                    break
+
+            self.agent.epsilon = max(self.agent.min_epsilon, self.agent.epsilon * self.agent.epsilon_decay)
+            allScores.append(self.state.score)
+            np.save("./pretrainedModels/PVZScores.pth", allScores)
+
+            if (episode + 1) % 5 == 0:
+                print(f"Episode {episode + 1}, Average Score: {(sum(scores) / len(scores)):.2f}, Score: {self.state.score:.2f}")
+                self.agent.saveModel(episode + 1)
 
         print('game over')
+    
+        
 
     
 

@@ -1,6 +1,7 @@
 __author__ = 'marble_xu'
 
 START_LEVEL_NUM = 1
+FPS = 60
 
 ORIGINAL_CAPTION = 'Plant VS Zombies Game'
 

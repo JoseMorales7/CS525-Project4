@@ -300,7 +300,7 @@ class Agent_DQN():
         self.epsilon_end = 0.01
         self.epsilon_decay = 0.995
         self.update_target_every = 1000  # Frequency of target network updates
-        self.update_net_every = 4  # Frequency of training
+        self.update_net_every = 10  # Frequency of training
         self.update_replay_buffer_every = 15
 
         self.actionSpace = np.arange(numLanes * numCols * numPlants + 2)
@@ -329,7 +329,13 @@ class Agent_DQN():
             observation = torch.Tensor(observation).unsqueeze(0).to(self.device)
             # print(observation.shape)
             with torch.no_grad():
-                action = self.q_net(observation).argmax().item()
+                qVals = self.q_net(observation).cpu().numpy()#argmax().item()
+
+            # print(qVals)
+            # print(mask)
+            action = np.where(mask, qVals, -np.inf)
+            # print(action)
+            action = np.argmax(action)
         else:
             if random.random() >= 0.5:
                 action = 0
@@ -338,22 +344,27 @@ class Agent_DQN():
 
         return action
 
-    def push(self, state, action, reward, next_state, done):
+    def push(self, state, action, reward, next_state, done, mask):
         """
         Push new data to buffer and remove the old one if the buffer is full.
         """
-        self.replay_buffer.append((state, action, reward, next_state, done))
+        self.replay_buffer.append((state, action, reward, next_state, done, mask))
 
     def sample_replay_buffer(self):
         batch = random.sample(self.replay_buffer, self.batch_size)
-        states, actions, rewards, next_states, dones = zip(*batch)
+        states, actions, rewards, next_states, dones, mask = zip(*batch)
+        # print(states)
+        # print(len(states))
+        # print(states[0].shape)
+        # print(torch.stack(states).shape)
 
         return (
-            torch.tensor(np.array(states), dtype=torch.float32).to(self.device),
+            torch.stack(states).to(self.device),
             torch.tensor(np.array(actions), dtype=torch.int64).unsqueeze(1).to(self.device),
             torch.tensor(np.array(rewards), dtype=torch.float32).unsqueeze(1).to(self.device),
-            torch.tensor(np.array(next_states), dtype=torch.float32).to(self.device),
+            torch.stack(next_states).to(self.device),
             torch.tensor(np.array(dones), dtype=torch.bool).unsqueeze(1).to(self.device),
+            torch.tensor(mask, dtype=torch.bool)
         )
 
     def train(self):
@@ -397,11 +408,20 @@ class Agent_DQN():
                 torch.save(self.q_net.state_dict(), 'dqn_model.pth')
 
     def learn(self):
-        states, actions, rewards, next_states, dones = self.sample_replay_buffer()
+        states, actions, rewards, next_states, dones, mask = self.sample_replay_buffer()
+        # print(states.shape)
+        # print(actions.shape)
+        # print(rewards.shape)
+        # print(next_states.shape)
+        # print(dones.shape)
+        # print(mask.shape)
+
 
         # Compute Q targets for next states
         with torch.no_grad():
-            q_target_values = self.q_target(next_states).max(1)[0].unsqueeze(1)
+            q_target_values_raw = self.q_target(next_states)  # Raw Q-values
+            q_target_values_raw[~mask] = -float('inf')  # Mask invalid actions
+            q_target_values = q_target_values_raw.max(1)[0].unsqueeze(1)
             q_targets = rewards + (self.gamma * q_target_values * ~dones)
 
         # Compute Q values for current states
@@ -415,6 +435,9 @@ class Agent_DQN():
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), 1.0)
         self.optimizer.step()
+
+    def saveModel(self, episodeNum):
+        torch.save(self.q_net.state_dict(), f"./pretrainedModels/PVZEp{episodeNum}.pth")
 
 
 # The key changes made to improve the DQN model:
